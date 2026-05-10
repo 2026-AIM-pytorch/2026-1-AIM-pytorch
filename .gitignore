@@ -1,0 +1,28 @@
+# 1. Python 및 캐시 파일
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 2. 파이썬 가상환경 (사용하는 이름에 맞게 선택)
+venv/
+env/
+.venv/
+
+# 3. PyTorch 모델 및 가중치 파일 (용량이 크므로 필수로 제외)
+*.pt
+*.pth
+*.ckpt
+
+# 4. 데이터 파일 (개인정보 보호 및 용량 제한 방지)
+*.csv
+*.json
+*.dat
+
+# 5. Jupyter Notebook (사용하는 경우)
+.ipynb_checkpoints/
+
+# 6. IDE 및 OS 환경 파일
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
