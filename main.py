@@ -1,147 +1,180 @@
 import pandas as pd
 import numpy as np
 import torch
-import pickle
+import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
+import pickle
 
-# 1. 데이터 불러오기
-interactions_df = pd.read_csv('./data/travel_interactions.csv')
+# ─────────────────────────────────────────────
+# 0. 재현성 고정
+# ─────────────────────────────────────────────
+torch.manual_seed(42)
+np.random.seed(42)
 
-# 2. 사용할 특성(Feature)과 타겟(Target) 설정
-# 사용자가 선택하는 'category(테마)', 'companion_type(동행)'과 'place_name(장소)'를 주요 특성으로 사용
-features = ['category', 'companion_type', 'place_name']
-target = 'schedule_satisfaction' 
+# ─────────────────────────────────────────────
+# 1. 데이터 로드
+# ─────────────────────────────────────────────
+df = pd.read_csv('travel_interactions.csv')
 
-# 3. 범주형 데이터 인코딩 (문자열 -> 숫자)
+# 기존 코드에 없던 특성 추가 (데이터 기반)
+# revisit(Y/N), crowdedness, stay_time_minutes, mobility_preference 활용
+cat_features   = ['category', 'companion_type', 'place_name', 'mood',
+                  'district', 'crowdedness', 'mobility_preference', 'revisit']
+num_features   = ['age', 'google_rating', 'stay_time_minutes']   # stay_time 추가
+target         = 'schedule_satisfaction'
+
+# ─────────────────────────────────────────────
+# 2. 전처리 (데이터 누수 방지: split → fit)
+# ─────────────────────────────────────────────
+# NaN 방어 처리
+for col in cat_features:
+    df[col] = df[col].fillna('unknown').astype(str)
+
+# 먼저 분리
+train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+
+# 범주형: 전체 데이터로 fit (배포 환경에서 미등장 클래스 방지)
 label_encoders = {}
-for col in features:
+for col in cat_features:
     le = LabelEncoder()
-    interactions_df[col] = le.fit_transform(interactions_df[col])
-    label_encoders[col] = le # 나중에 추론할 때 역변환을 위해 저장
+    le.fit(df[col])                                     # 전체 기준 fit
+    train_df = train_df.copy()
+    test_df  = test_df.copy()
+    train_df[col] = le.transform(train_df[col])
+    test_df[col]  = le.transform(test_df[col])
+    label_encoders[col] = le
 
-# 4. 학습/테스트 데이터 분리
-train_df, test_df = train_test_split(interactions_df, test_size=0.2, random_state=42)
+# 수치형: train으로만 fit → test에 transform (누수 차단)
+scaler = StandardScaler()
+train_df[num_features] = scaler.fit_transform(train_df[num_features])
+test_df[num_features]  = scaler.transform(test_df[num_features])
 
+# target 스케일링 (62~100 범위 → 정규화)
+target_scaler = StandardScaler()
+train_df[[target]] = target_scaler.fit_transform(train_df[[target]])
+test_df[[target]]  = target_scaler.transform(test_df[[target]])
+
+# ─────────────────────────────────────────────
+# 3. Dataset
+# ─────────────────────────────────────────────
 class TravelDataset(Dataset):
-    def __init__(self, df, features, target):
-        # 입력 데이터(X)와 정답 데이터(Y)를 텐서로 변환
-        self.X = torch.tensor(df[features].values, dtype=torch.long)
-        self.Y = torch.tensor(df[target].values, dtype=torch.float32)
+    def __init__(self, df, cat_cols, num_cols, target_col):
+        self.X_cat = torch.tensor(df[cat_cols].values, dtype=torch.long)
+        self.X_num = torch.tensor(df[num_cols].values, dtype=torch.float32)
+        self.Y     = torch.tensor(df[target_col].values, dtype=torch.float32)
 
     def __len__(self):
-        return len(self.X)
+        return len(self.Y)
 
     def __getitem__(self, idx):
-        return self.X[idx], self.Y[idx]
+        return self.X_cat[idx], self.X_num[idx], self.Y[idx]
 
-# DataLoader 생성 (배치 단위로 데이터 로드)
-train_dataset = TravelDataset(train_df, features, target)
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+train_ds     = TravelDataset(train_df, cat_features, num_features, target)
+test_ds      = TravelDataset(test_df,  cat_features, num_features, target)
+train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+test_loader  = DataLoader(test_ds,  batch_size=64, shuffle=False)   # 평가용 shuffle=False
 
-import torch.nn as nn
+# ─────────────────────────────────────────────
+# 4. 모델 (어휘 크기 비례 임베딩 차원 적용)
+# ─────────────────────────────────────────────
+class AdvancedRecommender(nn.Module):
+    def __init__(self, vocab_sizes, num_numeric):
+        super().__init__()
 
-class TravelRecommender(nn.Module):
-    def __init__(self, num_categories, num_companions, num_places, embedding_dim=16):
-        super(TravelRecommender, self).__init__()
-        
-        # 임베딩 레이어
-        self.cat_embed = nn.Embedding(num_categories, embedding_dim)
-        self.comp_embed = nn.Embedding(num_companions, embedding_dim)
-        self.place_embed = nn.Embedding(num_places, embedding_dim)
-        
-        # 임베딩된 벡터들을 합친 후 통과할 완전 연결 계층 (MLP)
-        self.fc_layers = nn.Sequential(
-            nn.Linear(embedding_dim * 3, 64),
+        # 어휘 크기에 비례한 임베딩 차원 (rule of thumb: min(50, (n+1)//2))
+        self.embeddings = nn.ModuleDict({
+            col: nn.Embedding(size, min(50, (size + 1) // 2))
+            for col, size in vocab_sizes.items()
+        })
+
+        embed_total = sum(min(50, (size + 1) // 2) for size in vocab_sizes.values())
+        input_dim   = embed_total + num_numeric
+
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+
+            nn.Linear(128, 64),
             nn.ReLU(),
             nn.Dropout(0.2),
+
             nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(32, 1) # 최종 만족도 점수 출력
+            nn.Linear(32, 1)
         )
 
-    def forward(self, x):
-        # x[:, 0]은 category, x[:, 1]은 companion_type, x[:, 2]는 place_name
-        cat_vec = self.cat_embed(x[:, 0])
-        comp_vec = self.comp_embed(x[:, 1])
-        place_vec = self.place_embed(x[:, 2])
-        
-        # 세 벡터를 하나로 연결 (Concatenate)
-        combined = torch.cat([cat_vec, comp_vec, place_vec], dim=1)
-        
-        # 점수 예측
-        output = self.fc_layers(combined)
-        return output.squeeze()
+    def forward(self, x_cat, x_num):
+        embedded = [
+            self.embeddings[col](x_cat[:, i])
+            for i, col in enumerate(self.embeddings.keys())
+        ]
+        x = torch.cat(embedded + [x_num], dim=1)
+        return self.network(x).squeeze()
 
-# 모델 초기화
-num_categories = len(label_encoders['category'].classes_)
-num_companions = len(label_encoders['companion_type'].classes_)
-num_places = len(label_encoders['place_name'].classes_)
+# ─────────────────────────────────────────────
+# 5. 초기화
+# ─────────────────────────────────────────────
+vocab_sizes = {col: len(label_encoders[col].classes_) for col in cat_features}
+model       = AdvancedRecommender(vocab_sizes, len(num_features))
+optimizer   = torch.optim.Adam(model.parameters(), lr=0.001)
+scheduler   = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
+criterion   = nn.MSELoss()
 
-model = TravelRecommender(num_categories, num_companions, num_places)
+# ─────────────────────────────────────────────
+# 6. 학습 루프
+# ─────────────────────────────────────────────
+NUM_EPOCHS  = 30
+best_val_loss = float('inf')
 
-import torch.optim as optim
-
-criterion = nn.MSELoss() # 손실 함수
-optimizer = optim.Adam(model.parameters(), lr=0.001) # 최적화 알고리즘
-
-epochs = 10
-
-for epoch in range(epochs):
+for epoch in range(NUM_EPOCHS):
+    # --- train ---
     model.train()
-    total_loss = 0
-    
-    for inputs, targets in train_loader:
-        optimizer.zero_grad() # 기울기 초기화
-        
-        outputs = model(inputs) # 모델 예측
-        loss = criterion(outputs, targets) # 오차 계산
-        
-        loss.backward() # 역전파
-        optimizer.step() # 가중치 업데이트
-        
-        total_loss += loss.item()
-        
-    print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(train_loader):.4f}")
+    train_loss = 0.0
+    for x_cat, x_num, y in train_loader:
+        optimizer.zero_grad()
+        pred = model(x_cat, x_num)
+        loss = criterion(pred, y)
+        loss.backward()
+        optimizer.step()
+        train_loss += loss.item()
+    train_loss /= len(train_loader)
 
-def recommend_places(selected_category, selected_companion, top_n=5):
+    # --- validation ---
     model.eval()
-    
-    # 1. 사용자 입력을 인코딩
-    cat_idx = label_encoders['category'].transform([selected_category])[0]
-    comp_idx = label_encoders['companion_type'].transform([selected_companion])[0]
-    
-    # 2. 평가할 모든 장소 목록 생성
-    all_places_idx = np.arange(num_places)
-    
-    # 3. 모델 입력 텐서 생성 (모든 장소에 대해 동일한 사용자의 테마/동행을 조합)
-    inputs = torch.tensor(
-        [[cat_idx, comp_idx, p_idx] for p_idx in all_places_idx], 
-        dtype=torch.long
-    )
-    
-    # 4. 점수 예측
+    val_loss = 0.0
     with torch.no_grad():
-        predicted_scores = model(inputs).numpy()
-        
-    # 5. 점수가 높은 순으로 정렬하여 상위 N개 추출
-    top_indices = predicted_scores.argsort()[-top_n:][::-1]
-    
-    # 6. 인덱스를 다시 원래 장소 이름으로 디코딩
-    recommended_places = label_encoders['place_name'].inverse_transform(top_indices)
-    
-    return recommended_places
+        for x_cat, x_num, y in test_loader:
+            pred     = model(x_cat, x_num)
+            val_loss += criterion(pred, y).item()
+    val_loss /= len(test_loader)
 
-# 예시 실행: "쇼핑" 테마로 "친구와 떠나는 여행"을 선택했을 때 추천받기
-top_places = recommend_places("쇼핑", "친구와 떠나는 여행", top_n=5)
-print("추천 장소:", top_places)
+    scheduler.step(val_loss)
 
-# 1. 모델 가중치 저장
-torch.save(model.state_dict(), 'travel_recommender.pth')
-print("모델 가중치가 'travel_recommender.pth'로 저장되었습니다.")
+    # 최적 모델 저장
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        torch.save(model.state_dict(), 'best_recommender.pth')
 
-# 2. 인코더 저장 (나중에 웹에서 입력받은 텍스트를 다시 숫자로 바꾸기 위해 필요)
-with open('label_encoders.pkl', 'wb') as f:
-    pickle.dump(label_encoders, f)
-print("인코더가 'label_encoders.pkl'로 저장되었습니다.")
+    if (epoch + 1) % 5 == 0:
+        print(f"Epoch {epoch+1:3d}/{NUM_EPOCHS} | "
+              f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+
+print(f"\n✅ 학습 완료 | Best Val Loss: {best_val_loss:.4f}")
+
+# ─────────────────────────────────────────────
+# 7. 전처리 객체 저장 (배포용)
+# ─────────────────────────────────────────────
+with open('preprocessors.pkl', 'wb') as f:
+    pickle.dump({
+        'label_encoders': label_encoders,
+        'scaler':         scaler,
+        'target_scaler':  target_scaler,
+        'cat_features':   cat_features,
+        'num_features':   num_features,
+    }, f)
+
+print("💾 모델 및 전처리 객체 저장 완료")

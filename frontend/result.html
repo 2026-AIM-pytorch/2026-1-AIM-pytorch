@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html class="light" lang="ko">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            background-color: #FDFCF0;
+            color: #1b1b1b;
+            font-family: 'Manrope', sans-serif;
+        }
+
+        /* ── 지도 컨테이너 ── */
+        #map-wrapper {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            border-radius: 20px;
+            overflow: hidden;
+            background: #e8e4d8;
+        }
+        #map-img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            transition: opacity 0.4s ease;
+        }
+
+        /* 지도 위 라벨 */
+        .map-label {
+            position: absolute;
+            bottom: 72px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 999px;
+            padding: 8px 18px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #1b1b1b;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.10);
+            cursor: pointer;
+            transition: box-shadow 0.2s;
+        }
+        .map-label:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.16); }
+        .map-label .material-symbols-outlined { font-size: 16px; color: #234F3B; }
+
+
+
+        /* 지도 로딩 스켈레톤 */
+        .map-skeleton {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, #e8e4d8 25%, #f0ede3 50%, #e8e4d8 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.6s infinite;
+            border-radius: 20px;
+        }
+        @keyframes shimmer {
+            0%   { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* ── 타임라인 ── */
+        .timeline-item {
+            display: flex;
+            gap: 20px;
+            padding: 24px 0;
+            border-bottom: 1px solid #e4e3d7;
+            animation: fadeUp 0.5s ease both;
+        }
+        .timeline-item:last-child { border-bottom: none; }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(16px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .rank-badge {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #013220;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .category-tag {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.10em;
+            text-transform: uppercase;
+            padding: 3px 10px;
+            border: 1px solid #c1c8c2;
+            border-radius: 4px;
+            color: #414943;
+            background: transparent;
+        }
+
+        .place-name {
+            font-size: 22px;
+            font-weight: 700;
+            color: #001b0f;
+            line-height: 1.25;
+            margin: 6px 0 8px;
+        }
+
+        .place-meta {
+            font-size: 13px;
+            color: #717973;
+            line-height: 1.6;
+        }
+
+
+
+
+
+        /* ── 헤더 ── */
+        .day-label {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            color: #717973;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .journey-title {
+            font-size: clamp(28px, 3vw, 42px);
+            font-weight: 800;
+            color: #001b0f;
+            line-height: 1.1;
+            margin-bottom: 10px;
+            letter-spacing: -0.02em;
+        }
+        .journey-subtitle {
+            font-size: 14px;
+            color: #717973;
+            line-height: 1.6;
+            margin-bottom: 32px;
+            max-width: 480px;
+        }
+
+        /* ── 다운로드 버튼 ── */
+        .download-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            border: 1.5px solid #001b0f;
+            color: #001b0f;
+            background: transparent;
+            padding: 14px 32px;
+            border-radius: 999px;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 32px;
+        }
+        .download-btn:hover {
+            background: #001b0f;
+            color: #FDFCF0;
+        }
+
+        /* ── 상단 nav ── */
+        .top-nav {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            background: rgba(253,252,240,0.92);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid #e4e3d7;
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#001b0f',
+                        'primary-container': '#013220',
+                        'secondary-container': '#e4e3d7',
+                        'on-surface-variant': '#414943',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body>
+
+<!-- ── 상단 네비 ── -->
+<nav class="top-nav">
+    <div class="max-w-[1200px] mx-auto px-5 py-4 flex justify-between items-center">
+        <a href="login.html" class="flex items-center gap-2 font-bold text-xl text-[#001b0f] tracking-tight">
+            <span class="material-symbols-outlined text-lg">arrow_back</span>
+            KMU AIM
+        </a>
+        <span class="text-xs font-semibold tracking-widest uppercase text-[#717973] bg-[#e4e3d7] px-4 py-1.5 rounded-full">
+            AI Custom Itinerary
+        </span>
+    </div>
+</nav>
+
+<!-- ── 메인 레이아웃 ── -->
+<main class="max-w-[1200px] mx-auto px-5 py-10">
+    <div class="flex flex-col lg:flex-row gap-10 items-start">
+
+        <!-- ── 왼쪽: 지도 (sticky) ── -->
+        <div class="w-full lg:w-[480px] shrink-0 lg:sticky lg:top-[73px]" style="height: calc(100vh - 100px); max-height: 680px;">
+            <div id="map-wrapper">
+                <div class="map-skeleton" id="map-skeleton"></div>
+                <img id="map-img" src="" alt="여행 경로 지도" style="display:none; width:100%; height:100%; object-fit:cover;" />
+
+                <!-- 구글맵 열기 라벨 -->
+                <div class="map-label" id="maps-link" style="display:none;">
+                    <span class="material-symbols-outlined">location_on</span>
+                    Interactive Route View
+                </div>
+
+
+            </div>
+        </div>
+
+        <!-- ── 오른쪽: 일정 ── -->
+        <section class="flex-grow w-full min-w-0">
+
+            <!-- 헤딩 -->
+            <div class="day-label">DAY 01</div>
+            <h1 class="journey-title" id="journey-title">당신을 위한 여정</h1>
+            <p class="journey-subtitle" id="journey-subtitle">AI 모델이 분석한 매칭 점수와 최적의 교통 동선을 결합한 결과입니다.</p>
+
+
+
+            <!-- 타임라인 카드 -->
+            <div id="timeline"></div>
+
+            <!-- 하단 버튼 -->
+            <div class="flex flex-wrap gap-4 items-center mt-6">
+                <button onclick="window.print()" class="download-btn">
+                    <span class="material-symbols-outlined" style="font-size:18px;">download</span>
+                    일정 PDF 저장
+                </button>
+                <a id="open-maps-btn" href="#" target="_blank"
+                   class="download-btn" style="display:none; text-decoration:none;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">map</span>
+                    Google Maps에서 보기
+                </a>
+            </div>
+        </section>
+    </div>
+</main>
+
+<!-- ── 푸터 ── -->
+<footer style="border-top: 1px solid #e4e3d7; margin-top: 80px; padding: 40px 20px; text-align:center;">
+    <div style="font-size:18px; font-weight:800; color:#001b0f; letter-spacing:-0.01em; margin-bottom:8px;">KMU AIM</div>
+    <p style="font-size:11px; color:#9a9b92; max-width:480px; margin:0 auto; line-height:1.7;">
+        © 2026 AIM_pytorch. All rights reserved.<br/>
+        본 일정은 AI 알고리즘 분석 결과물입니다. 실제 영업시간 및 상황과 다를 수 있습니다.
+    </p>
+</footer>
+
+<script src="result.js"></script>
+</body>
+</html>
