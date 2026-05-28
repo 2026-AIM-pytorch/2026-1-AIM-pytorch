@@ -254,6 +254,75 @@ class TravelRecommender:
             'predicted_score', 'latitude', 'longitude',
         ]]
 
+    # ── 주변 식당 탐색 ─────────────────────────
+
+    def get_nearby_restaurants(
+        self,
+        latitude:  float,
+        longitude: float,
+        radius_m:  float = 2000.0,
+        top_n:     int   = 3,
+    ) -> list[dict]:
+        """
+        특정 좌표 기준 반경 내 식당(category='미식')을 거리순으로 반환합니다.
+
+        Parameters
+        ----------
+        latitude  : 기준 장소의 위도
+        longitude : 기준 장소의 경도
+        radius_m  : 탐색 반경 (단위: 미터, 기본값 500m)
+        top_n     : 반환할 최대 식당 수 (기본값 3)
+
+        Returns
+        -------
+        list[dict] : [
+            {
+                'name':          str,
+                'district':      str,
+                'mood':          str,
+                'google_rating': float,
+                'distance_m':    int,
+            },
+            ...
+        ]
+        """
+        # ① 미식 카테고리 필터링
+        restaurants = self.places[self.places['category'] == '미식'].copy()
+
+        if restaurants.empty:
+            return []
+
+        # ② 각 식당까지의 거리 계산 (km → m 변환)
+        restaurants['distance_m'] = restaurants.apply(
+            lambda row: haversine_distance(
+                latitude, longitude,
+                row['latitude'], row['longitude']
+            ) * 1000,
+            axis=1,
+        ).astype(int)
+
+        # ③ 반경 필터링 + 거리 오름차순 정렬 + 상위 N개 선택
+        nearby = (
+            restaurants[restaurants['distance_m'] <= radius_m]
+            .sort_values('distance_m')
+            .head(top_n)
+        )
+
+        if nearby.empty:
+            return []
+
+        # ④ 반환 페이로드 조립
+        return [
+            {
+                'name':          row['place_name'],
+                'district':      row['district'],
+                'mood':          row['mood'],
+                'google_rating': float(row['google_rating']),
+                'distance_m':    int(row['distance_m']),
+            }
+            for _, row in nearby.iterrows()
+        ]
+
 
 # ─────────────────────────────────────────────
 # 3. 메인 실행 (CLI 테스트용)

@@ -43,7 +43,6 @@ recommender = TravelRecommender()
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 DIRECTIONS_API_KEY = os.environ.get("DIRECTIONS_API_KEY", "")
 
-
 # ─────────────────────────────────────────────
 # 요청/응답 스키마
 # ─────────────────────────────────────────────
@@ -200,15 +199,23 @@ def recommend(body: UserInput):
     # ② places 페이로드 조립
     places_payload = [
         {
-            "rank":              i + 1,
-            "name":              row["place_name"],
-            "district":          row["district"],
-            "mood":              row["mood"],
-            "google_rating":     float(row["google_rating"]),
-            "stay_time_minutes": int(row["stay_time_minutes"]),
-            "predicted_score":   round(float(row["predicted_score"]), 2),
-            "latitude":          float(row["latitude"]),
-            "longitude":         float(row["longitude"]),
+            "rank":                 i + 1,
+            "name":                 row["place_name"],
+            "district":             row["district"],
+            "mood":                 row["mood"],
+            "google_rating":        float(row["google_rating"]),
+            "stay_time_minutes":    int(row["stay_time_minutes"]),
+            "predicted_score":      round(float(row["predicted_score"]), 2),
+            "latitude":             float(row["latitude"]),
+            "longitude":            float(row["longitude"]),
+            "nearby_restaurants":   (
+                recommender.get_nearby_restaurants(
+                    float(row["latitude"]),
+                    float(row["longitude"]),
+                )
+                if body.category in ["관광", "쇼핑"]
+                else []
+            ),
         }
         for i, (_, row) in enumerate(result.iterrows())
     ]

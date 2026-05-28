@@ -17,18 +17,6 @@ const COMPANION_TITLE = {
     '부모님과 떠나는 여행':'Family Journey',
 };
 
-// 체류 시간 기준 방문 시각 자동 계산 (09:00 시작)
-function calcTimes(places) {
-    const times = [];
-    let minutes = 9 * 60; // 09:00
-    for (const p of places) {
-        const h = String(Math.floor(minutes / 60)).padStart(2, '0');
-        const m = String(minutes % 60).padStart(2, '0');
-        times.push(`${h}:${m}`);
-        minutes += p.stay_time_minutes + 30; // 이동 여유 30분
-    }
-    return times;
-}
 
 document.addEventListener('DOMContentLoaded', function () {
 
@@ -55,9 +43,9 @@ document.addEventListener('DOMContentLoaded', function () {
     titleEl.textContent  = companionTitle;
 
     const categoryKo = input.category || '';
-    subtitleEl.textContent =
-        `${categoryKo} 테마로 AI가 선별한 도쿄 최적 코스입니다. ` +
-        `매칭 점수와 교통 동선을 함께 분석한 결과입니다.`;
+    subtitleEl.innerHTML =
+        `AI가 ${categoryKo} 테마에 맞춰 선별한 도쿄 최적 코스입니다.<br> ` +
+        `매칭 점수와 교통 동선을 종합적으로 분석하여 반영했습니다.`;
 
     // ── 3. 경로 요약 바 — 삭제됨 ───────────────────────────
 
@@ -95,30 +83,42 @@ document.addEventListener('DOMContentLoaded', function () {
         return;
     }
 
-    const times = calcTimes(places);
-
     places.forEach((place, i) => {
-        const tagLabel = CATEGORY_LABEL[place.mood?.includes('쇼핑') ? '쇼핑' : input.category] || 'TRAVEL';
         const card = document.createElement('div');
         card.className = 'timeline-item';
         card.style.animationDelay = `${i * 0.08}s`;
+
+        // 주변 식당 HTML 조립 (관광·쇼핑 테마이고 데이터가 있을 때만)
+        const restaurants = place.nearby_restaurants || [];
+        const restaurantHTML = restaurants.length
+            ? `<div style="margin-top:10px; padding:10px 12px; background:#f7f6ee; border-radius:8px;">
+                <div style="font-size:11px; font-weight:700; letter-spacing:0.08em; color:#717973; margin-bottom:6px;">🍽️ 주변 식당</div>
+                ${restaurants.map(r => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#414943; padding:3px 0;">
+                        <span>${r.name} <span style="color:#9a9b92; font-size:11px;">${r.mood}</span></span>
+                        <span style="color:#717973; white-space:nowrap; margin-left:12px;">⭐ ${r.google_rating} &nbsp;·&nbsp; ${r.distance_m}m</span>
+                    </div>
+                `).join('')}
+               </div>`
+            : '';
 
         card.innerHTML = `
             <div class="rank-badge">${place.rank}</div>
 
             <div style="flex:1; min-width:0;">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-                    <span style="font-size:13px; font-weight:600; color:#717973; letter-spacing:0.04em;">
-                        ${times[i]}
-                    </span>
-                    <span class="category-tag">${tagLabel}</span>
-                </div>
 
-                <div class="place-name">${place.name}</div>
+                <div class="place-name">
+                    ${place.name}
+                    <span style="font-size:15px; font-weight:400; color: #717973; margin-left: 8px;">
+                        ${place.mood}
+                    </span>
+                </div>
 
                 <div class="place-meta">
-                    📍 ${place.district} &nbsp;·&nbsp; ⏱️ 권장 체류 ${place.stay_time_minutes}분
+                    📍 ${place.district} &nbsp;·&nbsp; ⏱️ 권장 체류 ${place.stay_time_minutes}분 &nbsp;·&nbsp; 🎯 매칭 점수 ${place.predicted_score}점
                 </div>
+
+                ${restaurantHTML}
             </div>
         `;
 
